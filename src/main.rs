@@ -4,6 +4,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use clap::builder::Str;
 use clap::Parser;
 use image::{ImageReader, DynamicImage, ImageEncoder};
 use std::fs::File;
@@ -11,7 +12,11 @@ use std::io::BufWriter;
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 
-#[derive(Parser)] // automatically implements the argument parser for a struct
+#[derive(Parser, Debug)] // automatically implements the argument parser for a struct
+#[command(name = "cmd_compressor")]
+#[command(author = "Adewale Adenuga")]
+#[command(version = "1.0")]
+#[command(about = "Use to compress images and PDFs")]
 struct Args {
     /// The file type to compress (e.g., pdf, jpg)
     #[arg(short, long)] // tells clap how to map command line flags i.e --file_type or -f
@@ -27,6 +32,18 @@ struct Args {
 }
 
 fn main() {
+    let val = (is_ghostscript_installed(), is_cargo_installed());
+    match val {
+        (_, true) => { // cargo installed, install dependencies
+            install_dependency(String::from("clap").as_ref()).expect("Error installing clap");
+            install_dependency(String::from("image").as_ref()).expect("Error installing image");
+        },
+        (_ , _) => { // installer script perhaps not run, or something went wrong with the installation
+            eprintln!("Did you run the installer script before starting this program? You need Ghostscript and Cargo for this program to run");
+            return;
+        }
+    };
+
     let args: Args = match Args::try_parse() {
         Ok(args) => args,
         Err(_) => {
@@ -52,20 +69,12 @@ fn main() {
 
     println!("output dir is {:?}", &output_dir);
 
+    // Actually navigate compression
     match extension.as_str() {
         "pdf" => compress_pdf(&args.input, &output_dir),
         "jpg" | "jpeg" => compress_jpg(&args.input, &output_dir),
         _ => print_usage_and_exit()
     }.expect("File type provided not supported by cmd_compressor");
-
-    let val = is_ghostscript_installed();
-    match val {
-        true => println!("Ghostscript is installed."),
-        _ => {
-            run_installer_script().expect("Ghostscript installer failed");
-            return;
-        }
-    };
 
 }
 
@@ -121,33 +130,65 @@ fn is_ghostscript_installed() -> bool {
         .unwrap_or(false)
 }
 
-// TODO: Try to add this program programmatically to PATH
-
-/// Run an installer script for Ghostscript.
-fn run_installer_script() -> io::Result<()> {
-    // Placeholder for the installer script logic
-    // This function would typically execute a script or command to install Ghostscript
-    // For example, it could use Command::new("installer_script.bat").status() to run a shell script
-    Ok(())
+/// Checks if Ghostscript is installed by attempting to run it with the `-v` flag.
+fn is_cargo_installed() -> bool {
+    // Constucts a command for launching the program at path program
+    Command::new("cargo")
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }
+
+/// Install all dependencies (clap and image) if not found, returns a true
+/// Would not work if run from command shell
+fn install_dependency(dep: &str) -> io::Result<bool> {
+    let status;
+    if let Ok(file) = std::fs::read_to_string("Cargo.lock") {
+        match file.contains(dep) {
+            false => { //only download dependencies if they're not already installed
+                status = Command::new("cargo")
+                            .args(["add", dep])
+                            .status()
+                            .expect("Failed to run cargo add");
+                if status.success() {
+                    return Ok(true);
+                } else {
+                    return Ok(false);
+                }
+            },
+            _ => {
+                Ok(false)
+            }
+        }
+    } else {
+        return Ok(false)
+    }
+
+    
+    
+}
+
+// TODO: Try to add this program programmatically to PATH
 
 fn print_usage_and_exit() -> io::Result<()> {
     eprintln!("==================================================================");
+    eprintln!("Read the README.md to begin");
     eprintln!("Use this program to compress the size of PDF files and JPGs using Ghostscript");
     eprintln!();
-    eprintln!("<> is a required argument, [] is an optional argument, Current supported file types are PDF and JPG");
+    eprintln!("<> is a required argument, [] is an optional argument, Current supported file types are PDF and JPG (or JPEG)");
     eprintln!();
     eprintln!("If an output file name is not provided, the program will use the input file name with a suffix '_compressed' added before the extension.");
     eprintln!();
-    eprintln!("Usage: cmd_compressor <file_type> <input_file_path> [output_file_name]");
+    eprintln!("Usage: cmd_compressor -f <file_type> -i <input_file_path> -o [output_file_name]");
     eprintln!("You can use short or long flags for the arguments, e.g., -f or --file_type");
     eprintln!();
     eprintln!();
-    eprintln!("Example: cmd_compressor --pdf .\\Downloads\\input.pdf output");
+    eprintln!("Example: cmd_compressor -f --pdf -i .\\Downloads\\input.pdf -o output");
     eprintln!("             will return a compressed file named output.pdf in the source directory of the input file i.e .\\Downloads\\output.pdf");
     eprintln!();
     eprintln!();
-    eprintln!("Example: cmd_compressor --jpg .\\Downloads\\input.jpg");
+    eprintln!("Example: cmd_compressor -f --jpg -i .\\Downloads\\input.jpg");
     eprintln!("             will return a compressed file named input_compressed.jpg in the source directory of the input file i.e .\\Downloads\\input_compressed.jpg");
     eprintln!();
     eprintln!("==================================================================");
