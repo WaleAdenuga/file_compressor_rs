@@ -4,32 +4,44 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::ptr::null;
 use clap::builder::Str;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use image::{ImageReader, DynamicImage, ImageEncoder};
 use std::fs::File;
 use std::io::BufWriter;
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 
-#[derive(Parser, Debug)] // automatically implements the argument parser for a struct
-#[command(name = "cmd_compressor")]
-#[command(author = "Adewale Adenuga")]
+pub mod gui;
+#[derive(Parser)] // automatically implements the argument parser for a struct
+#[command(author, version, about)]
+/* #[command(author = "Adewale Adenuga")]
 #[command(version = "1.0")]
-#[command(about = "Use to compress images and PDFs")]
+#[command(about = "Use to compress images and PDFs")] */
 struct Args {
-    /// The file type to compress (e.g., pdf, jpg)
-    #[arg(short, long)] // tells clap how to map command line flags i.e --file_type or -f
-    file_type: String,
-
-    /// The input file path
-    #[arg(short, long)]
-    input: PathBuf,
-
-    /// The output file name (optional)
-    #[arg(short, long)]
-    output: Option<String>,
+    #[command(subcommand)]
+    command: CommandLineArgs,
 }
+
+#[derive(Subcommand)]
+enum CommandLineArgs {
+    Compress {
+        /// The file type to compress (e.g., pdf, jpg)
+        #[arg(short, long)] // tells clap how to map command line flags i.e --file_type or -f
+        file_type: String,
+
+        /// The input file path
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// The output file name (optional)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+    Gui,
+}
+
 
 fn main() {
     let val = (is_ghostscript_installed(), is_cargo_installed());
@@ -47,35 +59,49 @@ fn main() {
     let args: Args = match Args::try_parse() {
         Ok(args) => args,
         Err(_) => {
-            print_usage_and_exit().expect("Not enough arguments provided");
+            eprintln!("Not enough arguments!");
+            //print_usage_and_exit().expect("Not enough arguments provided");
             return;
         }
     };
-    
-    let extension = args.input.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
-    let input_file_name = args.input.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+
+    let extension;
+    let input_file_name;
 
     // Formulate the output string/path
     let output_file_name;
-    //pattern matching, destructures args.output only if it is Some(), args.output is partially moved and can't be reused
-    // v takes ownership of the inner value
-    if let Some(v) = args.output { 
-        output_file_name = format!("{}.{}", v, &extension);
-    } else {
-        output_file_name = format!("{}_compressed.{}", &input_file_name, &extension);
+    let output_dir;
+
+    match args.command {
+        CommandLineArgs::Compress { file_type, input, output } => {
+            extension = input.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+            input_file_name = input.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+
+            //pattern matching, destructures output only if it is Some(), args.output is partially moved and can't be reused
+            // v takes ownership of the inner value
+            if let Some(v) = output { 
+                output_file_name = format!("{}.{}", v, &extension);
+            } else {
+                output_file_name = format!("{}_compressed.{}", &input_file_name, &extension);
+            }
+            output_dir = input.parent().unwrap().join(output_file_name);
+
+            println!("output dir is {:?}", &output_dir);
+
+            // Actually navigate compression
+            match file_type.as_str() {
+                "pdf" => compress_pdf(&input, &output_dir),
+                "jpg" | "jpeg" | "img" => compress_jpg(&input, &output_dir),
+                _ => {
+                    eprintln!("File type not currently supported");
+                    Ok(())
+                }
+            }.expect("File type provided not supported by cmd_compressor");
+        },
+        CommandLineArgs::Gui => {
+
+        },
     }
-    
-    let output_dir = args.input.parent().unwrap().join(output_file_name);
-
-    println!("output dir is {:?}", &output_dir);
-
-    // Actually navigate compression
-    match extension.as_str() {
-        "pdf" => compress_pdf(&args.input, &output_dir),
-        "jpg" | "jpeg" => compress_jpg(&args.input, &output_dir),
-        _ => print_usage_and_exit()
-    }.expect("File type provided not supported by cmd_compressor");
-
 }
 
 /// Compresses a PDF file using Ghostscript.
