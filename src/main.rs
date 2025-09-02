@@ -13,31 +13,29 @@ use std::io::BufWriter;
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 
+// Module definitions are almost always in file that "owns" the module: here main.rs, in android lib.rs
 pub mod gui;
+pub mod compress;
 #[derive(Parser)] // automatically implements the argument parser for a struct
-#[command(author, version, about)]
-/* #[command(author = "Adewale Adenuga")]
-#[command(version = "1.0")]
-#[command(about = "Use to compress images and PDFs")] */
 struct Args {
     #[command(subcommand)]
-    command: CommandLineArgs,
+    mode: Option<Mode>,
 }
 
 #[derive(Subcommand)]
-enum CommandLineArgs {
-    Compress {
-        /// The file type to compress (e.g., pdf, jpg)
-        #[arg(short, long)] // tells clap how to map command line flags i.e --file_type or -f
-        file_type: String,
-
-        /// The input file path
+enum Mode {
+    Cli {
+        /// The input file path // tells clap how to map command line flags i.e --file_type or -f
         #[arg(short, long)]
         input: PathBuf,
 
         /// The output file name (optional)
         #[arg(short, long)]
-        output: Option<String>,
+        output_name: Option<String>,
+
+        /// Compression quality (optional)
+        #[arg(short, long)]
+        quality: Option<u8>,
     },
     Gui,
 }
@@ -49,6 +47,8 @@ fn main() {
         (_, true) => { // cargo installed, install dependencies
             install_dependency(String::from("clap").as_ref()).expect("Error installing clap");
             install_dependency(String::from("image").as_ref()).expect("Error installing image");
+            install_dependency(String::from("rfd").as_ref()).expect("Error installing rfd");
+            install_dependency(String::from("eframe").as_ref()).expect("Error installing eframe");
         },
         (_ , _) => { // installer script perhaps not run, or something went wrong with the installation
             eprintln!("Did you run the installer script before starting this program? You need Ghostscript and Cargo for this program to run");
@@ -60,91 +60,22 @@ fn main() {
         Ok(args) => args,
         Err(_) => {
             eprintln!("Not enough arguments!");
-            //print_usage_and_exit().expect("Not enough arguments provided");
             return;
         }
     };
 
-    let extension;
-    let input_file_name;
-
-    // Formulate the output string/path
-    let output_file_name;
-    let output_dir;
-
-    match args.command {
-        CommandLineArgs::Compress { file_type, input, output } => {
-            extension = input.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
-            input_file_name = input.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
-
-            //pattern matching, destructures output only if it is Some(), args.output is partially moved and can't be reused
-            // v takes ownership of the inner value
-            if let Some(v) = output { 
-                output_file_name = format!("{}.{}", v, &extension);
-            } else {
-                output_file_name = format!("{}_compressed.{}", &input_file_name, &extension);
-            }
-            output_dir = input.parent().unwrap().join(output_file_name);
-
-            println!("output dir is {:?}", &output_dir);
-
-            // Actually navigate compression
-            match file_type.as_str() {
-                "pdf" => compress_pdf(&input, &output_dir),
-                "jpg" | "jpeg" | "img" => compress_jpg(&input, &output_dir),
-                _ => {
-                    eprintln!("File type not currently supported");
-                    Ok(())
-                }
-            }.expect("File type provided not supported by cmd_compressor");
+    match args.mode {
+        Some(Mode::Cli { input, output_name, quality }) => {
+            compress::compress_file(input, output_name, quality).expect("Compression module failed to compress");  
         },
-        CommandLineArgs::Gui => {
-
+        _ => {
+            // Launch gui as default mode
+            gui::run_gui().expect("Failed running gui");
         },
     }
 }
 
-/// Compresses a PDF file using Ghostscript.
-fn compress_pdf(input: &Path, output: &Path) -> io::Result<()> {
-    let status = Command::new("gswin64c")
-        .args([
-            "-sDEVICE=pdfwrite",
-            "-dCompatibilityLevel=1.4",
-            "-dPDFSETTINGS=/ebook", // or /screen
-            "-dNOPAUSE", "-dQUIET", "-dBATCH",
-            &format!("-sOutputFile={}", output.display()),
-            &input.display().to_string(),
-        ]).status().expect("Compress pdf ghostscript command run");
-    if status.success() {
-        println!("PDF compressed to {}", output.display())
-    }
-    Ok(())
-}
 
-/// Compresses a JPG using Ghostscript.
-fn compress_jpg(input: &Path, output: &Path) -> io::Result<()> {
-    let img = ImageReader::open(input)?.decode().expect("Could not decode image");
-    let out_buf = File::create(output)?;
-    let writer = BufWriter::new(out_buf);
-    let mut encoder = JpegEncoder::new_with_quality(writer, 70);
-
-    encoder.encode_image(&img).expect("Image encoding failed.");
-
-    println!("✅ JPEG compressed to {}", output.display());
-    Ok(())
-}
-
-/// Compress png file format
-fn compress_png(input: &Path, output: &Path) -> io::Result<()> {
-
-    let img = ImageReader::open(input)?.decode().expect("Could not decode message");
-    let file = File::create(output)?;
-    let writer = BufWriter::new(file);
-
-    let encoder = PngEncoder::new(writer);
-    encoder.write_image(img.as_bytes(), img.width(), img.height(), img.color().into()).expect("Png encoding failed");
-    Ok(())
-}
 
 /// Checks if Ghostscript is installed by attempting to run it with the `-v` flag.
 fn is_ghostscript_installed() -> bool {
@@ -190,11 +121,7 @@ fn install_dependency(dep: &str) -> io::Result<bool> {
     } else {
         return Ok(false)
     }
-
-    
-    
 }
-
 // TODO: Try to add this program programmatically to PATH
 
 fn print_usage_and_exit() -> io::Result<()> {
